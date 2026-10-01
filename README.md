@@ -1,3 +1,9 @@
+This is a program that can convert an image into a string. The generated string, when zoomed out or viewed from a distance, closely resembles the original image. It is suitable for outputting images on a TFT-OLED screen using a microcontroller, displaying images as text, or just for personal entertainment. The main body of this program is ImageChange.py. To run it directly, you can input parameters and call Show.py to display. Alternatively, you can use import ImageChange | a = ImageChange.ImageToString([path],[length],[quality],[reverse]) to display. Show.py is a string displayer that provides greater zooming capabilities. The length is recommended to be between 500-1500, which is clear and displays without lagging; the quality is ["min","low","medium","high","max"]. If running on a computer, it is recommended to use max. For a string of length 1000, it takes only about 2 seconds on an old e3 processor. The effect of reversing colors requires testing and observation to see which one better meets your expectations.
+
+以上是我自己写的，用百度翻译。下面是ai写的（代码也基本是deepseek-v4.1-pro写的）
+
+
+
 # ImageChange — structural image-to-ASCII-art converter
 
 Turn a photo into a picture "drawn" with characters: horizontal lines tend to
