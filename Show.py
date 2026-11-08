@@ -107,6 +107,13 @@ def _build_view(root: tk.Tk, text: str, title: str) -> None:
         txt.xview_scroll(-1 if event.delta > 0 else 1, "units")
         return "break"
 
+    # Bind on the Text itself first: Tk's own Text class binding already
+    # scrolls on <MouseWheel>, so returning "break" here suppresses that and
+    # prevents the wheel from moving the view twice.  The toplevel bindings
+    # stay as a fallback for wheel events outside the text area.
+    txt.bind("<Control-MouseWheel>", on_ctrl_wheel)
+    txt.bind("<Shift-MouseWheel>", on_shift_wheel)
+    txt.bind("<MouseWheel>", on_wheel)
     root.bind("<Control-MouseWheel>", on_ctrl_wheel)
     root.bind("<Shift-MouseWheel>", on_shift_wheel)
     root.bind("<MouseWheel>", on_wheel)

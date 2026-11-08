@@ -98,6 +98,29 @@ _FLAT_VAR = 25.0
 _BRIGHT_LIMIT: float = 200.0
 
 _VALID_QUALITY = frozenset(SIZES)
+
+# EXIF orientation tag: phones usually record the rotation instead of rotating
+# the pixels, so it has to be applied or portrait photos come out sideways.
+_ORIENTATION_TAG = 0x0112
+
+
+def _orient(arr: np.ndarray, orientation: int) -> np.ndarray:
+    """Apply an EXIF orientation (1-8) to the already-reduced grid."""
+    if orientation == 2:  # mirrored left/right
+        return arr[:, ::-1]
+    if orientation == 3:  # rotated 180
+        return arr[::-1, ::-1]
+    if orientation == 4:  # mirrored top/bottom
+        return arr[::-1]
+    if orientation == 5:  # transposed
+        return arr.T
+    if orientation == 6:  # needs a 90 degree clockwise turn
+        return np.rot90(arr, -1)
+    if orientation == 7:  # transversed
+        return arr[::-1, ::-1].T
+    return np.rot90(arr, 1)  # 8: needs a 90 degree counter-clockwise turn
+
+
 _CHARS = np.frombuffer(POOL.encode("ascii"), np.uint8)
 _MASKS = np.array(MASKS, np.uint64)
 _INKS = np.array(INKS, np.int32)
@@ -169,7 +192,11 @@ def ImageToString(
         raise ValueError(
             f"quality must be one of {sorted(_VALID_QUALITY)}, got {quality!r}"
         )
-    if out_length <= 0:
+    if (
+        not isinstance(out_length, int)
+        or isinstance(out_length, bool)
+        or out_length <= 0
+    ):
         raise ValueError("out_length must be a positive integer")
     if invert not in (0, 1):
         raise ValueError("invert must be 0 (off) or 1 (on)")
@@ -178,12 +205,24 @@ def ImageToString(
 
     # ---- load & preprocess ----------------------------------------------
     img = Image.open(image_path)
-    iw, ih = img.size
+    # Rotation is usually stored in the EXIF tag instead of in the pixels.  It
+    # is read before any pixel is decoded so that draft() below still works;
+    # the transform itself is applied to the tiny character grid at the end.
+    try:
+        orientation = int(img.getexif().get(_ORIENTATION_TAG, 1))
+    except Exception:
+        orientation = 1
+    if orientation not in range(1, 9):
+        orientation = 1
+    quarter_turn = orientation in (5, 6, 7, 8)  # these swap width and height
 
-    # Columns = out_length; rows follow the photo's aspect ratio.  The viewer
-    # renders square character cells, so no aspect compensation is needed here.
+    iw, ih = img.size
+    # Columns = out_length; rows follow the *displayed* aspect ratio.  The
+    # viewer renders square character cells, so no aspect compensation is
+    # needed here.
+    disp_w, disp_h = (ih, iw) if quarter_turn else (iw, ih)
     out_width = out_length
-    out_height = max(1, round(out_length * ih / iw))
+    out_height = max(1, round(out_length * disp_h / disp_w))
 
     # Flatten alpha channel onto a white background.
     if img.mode in ("RGBA", "LA") or (
@@ -194,13 +233,18 @@ def ImageToString(
         bg.paste(rgba, mask=rgba.split()[-1])
         img = bg
 
+    # Pixel grid of the final (displayed) result.
+    grid_w, grid_h = out_width * _GW, out_height * _GH
+    # The rotated orientations are still stored quarter-turned, so the source
+    # is reduced into the transposed grid and rotated afterwards.
+    target_w, target_h = (grid_h, grid_w) if quarter_turn else (grid_w, grid_h)
+
     # JPEG: ask the decoder for no more pixels than we could possibly use.
-    img.draft("L", (out_width * _GW, out_height * _GH))
+    img.draft("L", (target_w, target_h))
     # Going to L *before* the big resize is several times cheaper than resizing
     # in RGB and converting afterwards.
     gray = img.convert("L")
 
-    target_w, target_h = out_width * _GW, out_height * _GH
     # Upscaling with BOX only ever replicates source pixels, so NEAREST gives a
     # near-identical result for a fraction of the cost; downscaling needs BOX.
     resample = (
@@ -209,6 +253,10 @@ def ImageToString(
         else Image.Resampling.BOX
     )
     raw = np.asarray(gray.resize((target_w, target_h), resample), np.uint8)
+
+    # Bring the reduced grid into display orientation (cheap: grid-sized only).
+    if orientation != 1:
+        raw = _orient(raw, orientation)
 
     # Overall brightness check: if the mean gray is too high (> _BRIGHT_LIMIT)
     # the picture is mostly white and the output would come out blank, so dim
@@ -309,17 +357,26 @@ if __name__ == "__main__":
 
     from Show import ShowS
 
+    def ask_int(prompt: str, default: int) -> int:
+        """Ask for an integer, re-asking instead of crashing on bad input."""
+        while True:
+            raw = input(prompt).strip()
+            if not raw:
+                return default
+            try:
+                return int(raw)
+            except ValueError:
+                print(f"Please enter a whole number (Enter = {default}).")
+
     image_path = input("Image path: ").strip().strip('"')
-    out_length = int(
-        input("Length (character columns; rows follow the aspect ratio): ")
+    out_length = ask_int(
+        "Length (character columns; rows follow the aspect ratio): ", 500
     )
     quality = input("Quality (min/low/medium/high/max, Enter = medium): ").strip()
-    invert = input("Invert (0 = off / 1 = on, Enter = 0): ").strip()
+    invert = ask_int("Invert (0 = off / 1 = on, Enter = 0): ", 0)
 
     t0 = time.perf_counter()
-    result = ImageToString(
-        image_path, out_length, quality or "medium", int(invert or "0")
-    )
+    result = ImageToString(image_path, out_length, quality or "medium", invert)
     elapsed = time.perf_counter() - t0
 
     art = "\n".join("".join(row) for row in result)
